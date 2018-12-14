@@ -1,0 +1,254 @@
+# imports
+
+import bs4 as bs
+import urllib.request
+import csv
+import webbrowser
+import pandas as pd
+import time
+import requests
+from datetime import timedelta
+import numpy as np
+import pandas as pd
+import requests
+from bs4 import BeautifulSoup
+
+# --------------------------------------------------------------------------------------------------------------------------------------
+
+# a list of the team abbreviations basketball reference uses in URLs
+# lst_of_teams = ['ATL','BRK','BOS','CHO','CHI','CLE','DAL','DEN','DET','GSW','HOU','IND','LAC','LAL','MEM','MIA','MIL','MIN','NOP','NYK','OKC','ORL','PHI','PHO','POR','SAC','SAS','TOR','UTA','WAS']
+
+# --------------------------------------------------------------------------------------------------------------------------------------
+
+# a function that returns a list of all the boxscore URLs we want to scrape 
+def get_urls():
+    get_these = []
+    teams_as_abbv = ['ATL','BRK','BOS','CHO','CHI','CLE','DAL','DEN','DET','GSW','HOU','IND','LAC','LAL','MEM','MIA','MIL','MIN','NOP','NYK','OKC','ORL','PHI','PHO','POR','SAC','SAS','TOR','UTA','WAS']
+    
+    for team_as_abbv in teams_as_abbv:
+        url = 'https://www.basketball-reference.com/teams/%s/2019_games.html' % team_as_abbv
+        sauce = urllib.request.urlopen(url).read()
+        soup = BeautifulSoup(sauce,'lxml')
+
+        pages = []
+        for u in soup.findAll('a'):
+            a = u.get('href')
+            pages.append(a)
+
+        has_boxscore = []
+
+        for item in pages:
+            if "boxscores" in item:
+                has_boxscore.append(item)
+            else:
+                continue
+
+        def length_of_urls(lst_of_urls):
+            # takes in list of urls and tells us how many of each length we have.
+            # extension of this will be to only keep the urls with the highest length.
+
+            counts_of_lengths = {}
+
+            for item in lst_of_urls:
+                length = len(item)
+                if length in counts_of_lengths:
+                    counts_of_lengths[length] += 1
+                else:
+                    counts_of_lengths[length] = 1
+
+            most_common_url_length = max(counts_of_lengths, key=counts_of_lengths.get)
+
+            return (most_common_url_length)
+
+        most_common_length = length_of_urls(has_boxscore)
+
+        boxscores = []
+        for boxscore in has_boxscore:
+            if len(boxscore) == most_common_length:
+                boxscores.append(boxscore)
+        team_as_abbv_boxscores = []
+        for bs in boxscores:
+            if team_as_abbv in bs:
+                team_as_abbv_boxscores.append(bs)
+
+        team_as_abbv_boxscores = set(team_as_abbv_boxscores)
+
+        days = []
+        count = 0
+        while count < 31:
+            count += 1
+            days.append(count)
+        strdays = []
+
+        for item in days:
+            strdays.append(str(item))
+
+        strmonths = ['10', '11']
+        dates = []
+        for mo in strmonths:
+            for day in strdays:
+                date1 = '2018' + mo + '0' + day
+                dates.append(date1)
+                date2 = '2018' + mo + day
+                dates.append(date2)
+
+        for date in dates:
+            for bs in team_as_abbv_boxscores:
+                if date in bs:
+                    get_these.append(bs)
+    return(get_these)
+
+# --------------------------------------------------------------------------------------------------------------------------------------
+
+# a function that takes in the list of urls to scrape, and returns a list of pandas dataframes ready to be exported to excel
+def away_boxscores(lst_of_urls):
+    here_ya_go = []
+    
+    for item in lst_of_urls:
+        dataframes = pd.read_html('https://www.basketball-reference.com/' + '%s' % item, header=1)
+        res = requests.get('https://www.basketball-reference.com/' + '%s' % item)
+        soup = BeautifulSoup(res.content,'lxml')
+        away_header = soup.findAll('h2')[3]
+        away_header = str(away_header)
+        away_header = away_header[4:-5]
+        
+        header = soup.findAll('h1')
+        opponent = str(header)
+        opponent = opponent.split(' ')
+        opponent = opponent[3] + ' ' + opponent[4]
+        headerdate = str(soup.findAll('h1'))[5:-6]
+        headerdate = headerdate.split(',')
+        moday = headerdate[1].split(' ')
+        mnth = moday[1]
+        day = moday[2]
+        yr = headerdate[2].split(' ')
+        yr = yr[1]
+        
+        # taking the first two dataframes, and the last row of the first dataframe
+        df1 = dataframes[0]
+        df2 = dataframes[1]
+        non_flat = df1.tail(1).values.tolist()
+
+
+        # merging the first two dataframes.
+        df1 = df1.drop(index=5)
+        df2 = df2.drop(index=5)
+        df = pd.merge(df1,df2,on=['Starters','MP'])
+
+        # dropping bad columns in our dataframe.
+        for col in df.columns:
+            if 'Unnamed' in col:
+                df = df.drop(col,axis=1)
+
+        # taking those good column names, and using them on our teamdf.
+        col_headers = list(df.columns.values)
+
+        # as of now they are super ugly. 
+        # turning the last row into a flat list.
+        team_total_values_twice = []
+        for sublist in non_flat:
+            for val in sublist:
+                team_total_values_twice.append(val)
+        
+        team_totals_once = ['Team Totals'] + team_total_values_twice[1:35]
+
+        # team_df
+        team_df = pd.DataFrame(team_totals_once, index=col_headers).transpose()
+
+        # note that we now have the same index for the first player and the team. 
+        df = df.append(team_df)
+        df.fillna(value=0)
+
+        # getting minutes from weird string column and adding a column with minutes as a float.
+        def get_mins(item):
+            # need to set up some exception handling here. 
+            try:
+                (m, s) = item.split(':')
+                secs = int(m)*60 + int(s)
+                mins = secs / 60
+                mins = round(mins,3)
+            except:
+                mins = 0
+            return mins
+
+        lst = df['MP'].tolist()
+        new_lst = []
+        for i in lst:
+            if i == 'Did Not Play' or i == '240' or len(i) == 3:
+                new_lst.append(0)
+            else:
+                x = get_mins(i)
+                new_lst.append(x)
+
+        final_lst =[]
+        for i in new_lst:
+            x = round(i, 3)
+            final_lst.append(x)
+        df['Mins'] = final_lst
+
+
+        # turning strings into floats where neccessary. 
+        columns = df.columns
+        columns = columns.tolist()
+
+        new_columns = []
+        for col in columns:
+            if col == 'Starters' or col == 'MP':
+                continue
+            else:
+                new_columns.append(col)
+
+        for col in new_columns:
+            df[col] = df[col].astype('float64')
+
+
+        # doing math and making more columns
+        df['FDPts'] = df['PTS'] + (1.5 * df['AST']) + (1.2 * df['TRB']) + (3 * df['STL']) + (3* df['BLK']) - df['TOV']
+
+        over_mins = ['FGA', 'FTA', 'ORB', 'DRB', 'TRB','AST','STL','BLK','TOV','PTS','+/-','FDPts']
+        scaleby_mins = ['USG%', 'ORB%', 'DRB%', 'TRB%', 'AST%', 'STL%', 'BLK%','TOV%','ORtg','DRtg']
+        over_ast = ['FGA', 'FG', '3P', '3PA','TOV']
+
+        for item in over_mins:
+            df[item+'mins'] = df[item] / df['Mins']
+        for item in scaleby_mins:
+            df[item+'*mins'] = df[item] * df['Mins']
+        for item in over_ast:
+            df[item+'ast'] = df[item] / df['AST']
+        df = df.fillna(value=0)
+        df = df.replace([np.inf, -np.inf], np.nan).fillna(value=0)
+
+
+        # fix this and make them enter that sht
+        for row in df:
+            df['Team'] = away_header
+            df['Location'] = 'Away'
+            df['Month'] = mnth
+            df['Day'] = day
+            df['Year'] = yr
+            df['Opponent'] = opponent
+        
+        here_ya_go.append(df)
+        
+    return here_ya_go
+
+# --------------------------------------------------------------------------------------------------------------------------------------
+
+# a function that takes in the list of dataframes and exports them to an excel sheet
+def export_to_excel(df_list, sheet_name, file_name, spaces):
+    # give it list of dataframes. 
+    # will save to the file_name and sheet you specify.
+    
+    # it starts on the first row in excel, and spaces arg are spaces between dataframes. 
+    
+    writer = pd.ExcelWriter(file_name,engine='xlsxwriter')
+    
+    row = 0
+    
+    for dataframe in df_list:
+        dataframe.to_excel(writer,sheet_name=sheet_name,startrow=row , startcol=0)   
+        row = row + len(dataframe.index) + spaces + 1
+    writer.save()
+
+# --------------------------------------------------------------------------------------------------------------------------------------
+
