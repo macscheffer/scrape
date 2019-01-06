@@ -1,0 +1,39 @@
+# Pro Football Reference Scraper
+
+# getting the weeks for 2018 season, this can be modified such that
+# you can input the year that you want. 
+def get_weeks():
+    
+    html = urllib.request.urlopen('https://www.pro-football-reference.com/years/2018/week_1.htm').read()
+    soup = bs.BeautifulSoup(html,'html.parser')
+    
+    hrefs = []
+    for url in soup.findAll('a'):
+        hrefs.append(url.get('href'))
+    
+    weeks = []
+    for href in hrefs:
+        if 'week' in href and 'years' in href and '2018' in href:
+            weeks.append(href)
+        else:
+            continue
+    return set(weeks)
+
+# gets the boxscores using the list of week hrefs that get_weeks() returns
+def get_boxscores(weeks):
+    
+    boxscores = []
+    for week in weeks:
+        html = urllib.request.urlopen('https://www.pro-football-reference.com' + week).read()
+        soup = bs.BeautifulSoup(html,'html.parser')
+        
+        hrefs = []
+        for url in soup.findAll('a'):
+            hrefs.append(url.get('href'))
+        for href in hrefs:
+            if 'boxscores' in href and '2018' in href:
+                boxscores.append(href)
+    return boxscores
+
+
+# now we need to scrape the actual boxscore links. 
